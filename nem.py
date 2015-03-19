@@ -1,6 +1,3 @@
-# Import parts from nem.py.  Make it clean!
-# After cleaning it, put each class in a separate file.  Some modularity, man!
-
 import cPickle
 import gzip
 import os
