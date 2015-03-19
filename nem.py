@@ -39,15 +39,6 @@ class AbstractNode(object):
 			verbindex = T.iscalar('verbindex')
 			a0, a1, a2, a3  = T.matrices('a0', 'a1', 'a2', 'a3')
 			self.input = T.concatenate([ts_vocab[verbindex], a0, a1, a2, a3], axis=1)
-			# TODO: Get rid of autoencoder, and the dependency on dA
-			#self.autoencoder = dA(numpy_rng=numpy_rng,
-			#			theano_rng=theano_rng,
-			#			input=self.input,
-			#			n_visible=n_vis,
-			#			n_hidden=n_hid,
-			#			W=W,
-			#			bhid=bhid)
-			#self.output = self.autoencoder.get_hidden_values(self.input)
 			self.output = self.get_hidden_values(self.input, W, bhid, activation)
 			label = T.iscalar('label')
 			self.score = T.sum(T.nnet.sigmoid(T.dot(self.output, scorer.T)))
@@ -94,18 +85,8 @@ class AbstractNode(object):
 			left_fake_input = T.concatenate([fake_leftrep, rightrep], axis=1)
 			right_fake_input = T.concatenate([leftrep, fake_rightrep], axis=1)
 				
-			# TODO: Get rid of autoencoder, and the dependency on dA
-			#self.autoencoder = dA(numpy_rng=numpy_rng,
-			#			theano_rng=theano_rng,
-			#			input=self.input,
-			#			n_visible=n_vis,
-			#			n_hidden=n_hid,
-			#			W=W,
-			#			bhid=bhid)
-			#fake_outputs = [self.autoencoder.get_hidden_values(left_fake_input), self.autoencoder.get_hidden_values(right_fake_input)]
 			fake_outputs = [self.get_hidden_values(left_fake_input, W, bhid, activation), self.get_hidden_values(right_fake_input, W, bhid, activation)]
 		
-			#self.output = self.autoencoder.get_hidden_values(self.input)
 			self.output = self.get_hidden_values(self.input, W, bhid, activation)
 			# Summing to make the "matrix" of dimension 1x1 a scalar.
 			self.score = T.sum(T.dot(self.output, scorer.T))
@@ -137,8 +118,6 @@ class AbstractNode(object):
 	def get_update_function(self):
 		gparams = T.grad(self.cost, self.params)
 		self.updates = []
-		# NA: [4:] may include leftRep and rightRep for argNodes, and nothing for eventNodes.
-		# NA: We want to calculate the gradients with respect to leftRep and rightRep for backprop, but not make any updates.
 		for param, gparam in zip(self.params, gparams):
 			self.updates.append((param, param - self.lr * gparam))
 		return theano.function(self.costInputs, self.cost, updates=self.updates)
@@ -155,8 +134,6 @@ class NEM(object):
 		event_n_ins = n_ins*numargs
 		event_n_outs = n_outs
 		initial_argbhid = numpy.zeros(arg_n_outs, dtype=theano.config.floatX)
-		#initial_argbhid = numpy.zeros(arg_n_ins, dtype=theano.config.floatX)
-		#initial_eventbhid = numpy.zeros(event_n_outs, dtype=theano.config.floatX)
 		initial_eventbhid = numpy.zeros(event_n_outs, dtype=theano.config.floatX)
 		initial_argW = numpy.asarray(numpy_rng.uniform(
 					low=-4 * numpy.sqrt(6. / (arg_n_outs + arg_n_ins)),
@@ -243,7 +220,6 @@ class NEM(object):
 				newnode = ConcreteArgNode(wordembeds[index], vocabIndex=index, leftChild=None, rightChild=None)
 				topnodes.append(newnode)
 
-		#totalcost = 0.0
 		maxscore = 0
 		while len(topnodes) != 1:
 			mergepos, maxscore = getmaxscoremerge(topnodes)
@@ -270,13 +246,6 @@ class NEM(object):
 				newnode = ConcreteArgNode(output, None, leftNode, rightNode)
 			topnodes = topnodes[:mergepos] + [newnode] + topnodes[mergepos+2:]
 			
-		#return topnodes, totalcost
-		#fake_scores = []
-		#if train:
-		#	for fakeRep in topnodes[0].fakeReps:
-		#		fake_scores.append(self.arg_output_score_function(fakeRep))
-		#return topnodes, maxscore, fake_scores
-		#TODO: The maxscore here is just the score of composition of the top node.  Is that what we want?
 		return topnodes, maxscore
 
 	def train_arg_composition(self, events, vocabsize, no_updates=False):
@@ -296,7 +265,6 @@ class NEM(object):
 			# to deal with dynamic structures.  
 			while len(process_list) != 0:
 				topnode = process_list[0]
-				#for fakeRep in topnode.fakeReps:
 				# Updating parameters for scores obtained by replacing each of the words randomly.
 				if topnode.leftChild.vocabIndex is not None and topnode.rightChild.vocabIndex is not None:
 					# We are dealing with a node whose both children are leaf nodes
@@ -333,16 +301,11 @@ class NEM(object):
 				if topnode.rightChild.vocabIndex is None:
 					process_list.append(topnode.rightChild)
 				process_list = process_list[1:]
-			#arg_scores.append(argscore)
 			trainscores.append(argscore)
 			traincosts.extend(arg_costs)
 		return trainscores, traincosts
 
 	def get_arg_embeddings(self, events, splitsizes, args_wanted, argindex={}, indexrep = []):
-		# arg -> index
-		#argindex = {}
-		# argindex -> rep
-		#indexrep = []
 		eventargs = []
 		argpositions = {'V':set(), 'A0':set(), 'A1': set(), 'AM-LOC': set(), 'AM-TMP': set()}
 		for event, numwords in zip(events, splitsizes):
@@ -370,13 +333,12 @@ class NEM(object):
 					argnum = argindex[arg_id]
 					argrep = indexrep[argnum]
 				index+=num
-				#eventreps.append(argnodes[0].outputRep)
 				# Collect the indexes of the args forming the event
 				argnums.append(argnum)
 				# Collect label specific indexes of argreps for contrastive estimation in phase 2
 				argpositions[label].add(argnum)
 			eventargs.append((verbindex, argnums))
-		#argindex is a dict of argtext -> index ints, indexrep is list of arg representations, eventargs is list of arg indexes of events, argpositions set of argument indexes per label.
+		#indexrep is list of arg representations, eventargs is list of arg indexes of events, argpositions set of argument indexes per label.
 		return indexrep, eventargs, argpositions
 
 	def score_event_composition(self, eventargs, indexrep):
@@ -394,8 +356,6 @@ class NEM(object):
 		costs = []
 		for (verbindex, event), label in zip(eventargs, labels):
 			a0rep, a1rep, a2rep, a3rep = [indexrep[event[x]] for x in range(4)]
-			#for fs in fakeScores:
-			#	self.event_update_function(verbindex, a0rep, a1rep, a2rep, a3rep, fs)
 			if no_updates:
 				cost = self.event_cost_function(verbindex, a0rep, a1rep, a2rep, a3rep, label)
 			else:
