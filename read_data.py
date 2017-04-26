@@ -15,6 +15,8 @@ class DataProcessor:
     def __init__(self):
         # All types of arguments seen by the processor. A0, A1, etc.
         self.arg_types = []
+        self.max_sentence_length = None
+        self.max_arg_length = None
         self.word_index = {"NONE": 0, "UNK": 1}  # None is padding, UNK is OOV.
 
     def index_data(self, filename, add_new_words=True, pad_info=None):
@@ -27,7 +29,8 @@ class DataProcessor:
         indexed_data = []
         for datum in data:
             indexed_sentence = self._index_string(datum["sentence"], add_new_words=add_new_words)
-            indexed_event_args = {key: self._index_string(datum["event_structure"][key]) for key in
+            indexed_event_args = {key: self._index_string(datum["event_structure"][key],
+                                                          add_new_words=add_new_words) for key in
                                   datum["event_structure"].keys()}
             indexed_data.append((indexed_sentence, indexed_event_args, datum["label"]))
         sentence_inputs, event_inputs, labels = self.pad_data(indexed_data, pad_info)
@@ -64,12 +67,12 @@ class DataProcessor:
             pad_info = {}
         indexed_sentences, indexed_event_structures, labels = zip(*indexed_data)
         if "max_sentence_length" in pad_info:
-            max_sentence_length = pad_info["max_sentence_length"]
+            self.max_sentence_length = pad_info["max_sentence_length"]
         else:
-            max_sentence_length = max([len(indexed_sentence) for indexed_sentence in indexed_sentences])
+            self.max_sentence_length = max([len(indexed_sentence) for indexed_sentence in indexed_sentences])
         # Padding and/or truncating sentences
         for indexed_sentence in indexed_sentences:
-            sentence_inputs.append(self._pad_indexed_string(indexed_sentence, max_sentence_length))
+            sentence_inputs.append(self._pad_indexed_string(indexed_sentence, self.max_sentence_length))
 
         # Removing unnecessary arguments.
         if "wanted_args" in pad_info:
@@ -88,12 +91,13 @@ class DataProcessor:
                                        [self.word_index["NONE"]] for arg_type in self.arg_types]
             ordered_event_structures.append(ordered_event_structure)
         if "max_arg_length" in pad_info:
-            max_arg_length = pad_info["max_arg_length"]
+            self.max_arg_length = pad_info["max_arg_length"]
         else:
-            max_arg_length = max([max([len(arg) for arg in structure]) for structure in ordered_event_structures])
+            self.max_arg_length = max([max(
+                [len(arg) for arg in structure]) for structure in ordered_event_structures])
         event_inputs = []
         for event_structure in ordered_event_structures:
-            event_inputs.append([self._pad_indexed_string(indexed_arg, max_arg_length) for indexed_arg in
+            event_inputs.append([self._pad_indexed_string(indexed_arg, self.max_arg_length) for indexed_arg in
                                  event_structure])
         return numpy.asarray(sentence_inputs), numpy.asarray(event_inputs), numpy.asarray(labels)
 
@@ -106,6 +110,20 @@ class DataProcessor:
         padded_string = ([self.word_index["NONE"]] * (max_string_length - string_length) +
                          indexed_string)[-max_string_length:]
         return padded_string
+
+    def get_pad_info(self):
+        '''
+        Returns the information required to pad or truncate new datasets to make new inputs look like those
+        processed so far. This is useful to make test data the same size as train data.
+        '''
+        pad_info = {}
+        if self.arg_types is not None:
+            pad_info["wanted_args"] = self.arg_types
+        if self.max_arg_length is not None:
+            pad_info["max_arg_length"] = self.max_arg_length
+        if self.max_sentence_length is not None:
+            pad_info["max_sentence_length"] = self.max_sentence_length
+        return pad_info
 
     def get_embedding(self, embedding_file):
         '''
