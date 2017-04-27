@@ -36,7 +36,7 @@ if you want to use pretrained embeddings. Run `python nem.py -h` for more option
 
 ## Paper
 
-This is a reimplementation (with minor modifications) of the model described in the following paper:
+This is a reimplementation (with minor modifications) of the model described in the following paper, with labels indicating newswire anomalies:
 
 [*Modeling Newswire Events using Neural Networks for Anomaly Detection*](http://www.anthology.aclweb.org/C/C14/C14-1134.pdf)
 
