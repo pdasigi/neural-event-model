@@ -5,10 +5,10 @@ Train and test Neural Event Model (NEM). This module also comes with a main func
 import argparse
 
 from keras.models import Model
-from keras.layers import Input, Dense, Dropout, Embedding, LSTM, Flatten
+from keras.layers import Input, Dense, Dropout, Embedding, LSTM
 from keras.callbacks import EarlyStopping
 
-from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN
+from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN, MaskedFlatten
 from read_data import DataProcessor
 
 
@@ -65,7 +65,7 @@ class NEM:
         encoder = TimeDistributedRNN(LSTM(self.embedding_dim), name="ArgumentEncoder")
         encoded_inputs = encoder(embedded_inputs)  # (batch_size, num_slots, embedding_dim)
         # (batch_size, num_slots * embedding_dim)
-        concatenated_slots = Flatten(name="SlotConcatenator")(encoded_inputs)
+        concatenated_slots = MaskedFlatten(name="SlotConcatenator")(encoded_inputs)
         # Note: We essentially have different projection weights for slots here.
         event_composer = Dense(self.embedding_dim, activation='tanh', name="EventComposer")
         # (batch_size, embedding_dim)

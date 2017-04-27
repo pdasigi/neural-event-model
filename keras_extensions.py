@@ -5,7 +5,7 @@ assumptions here.
 from overrides import overrides
 
 from keras import backend as K
-from keras.layers import Embedding, TimeDistributed
+from keras.layers import Embedding, TimeDistributed, Flatten
 
 
 class AnyShapeEmbedding(Embedding):
@@ -32,3 +32,29 @@ class TimeDistributedRNN(TimeDistributed):
             return None
         else:
             return K.any(input_mask, axis=-1)
+
+
+class MaskedFlatten(Flatten):
+    '''
+    Flatten does not allow masked inputs. This class does.
+    '''
+    def __init__(self, **kwargs):
+        super(MaskedFlatten, self).__init__(**kwargs)
+        self.supports_masking = True
+
+    def call(self, inputs, mask=None):
+        # Assuming the output will be passed through a dense layer after this.
+        if mask is not None:
+            inputs = K.switch(K.expand_dims(mask), inputs, K.zeros_like(inputs))
+        return super(MaskedFlatten, self).call(inputs)
+
+    def compute_mask(self, inputs, mask=None):
+        if mask is None:
+            return None
+        else:
+            if K.ndim(mask) == 2:
+                # This needs special treatment. It means that the input ndim is 3, and output ndim is 2, thus
+                # requiring the mask's ndim to be 1.
+                return K.any(mask, axis=-1)
+            else:
+                return K.batch_flatten(mask)
