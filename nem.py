@@ -46,7 +46,7 @@ class NEM:
         '''
         metric_values = self.model.evaluate(inputs, labels)
         for metric_name, metric_value in zip(self.model.metrics_names, metric_values):
-            print("\n%s: %.4f" % (metric_name, metric_value))
+            print("%s: %.4f" % (metric_name, metric_value))
 
     def _build_structured_model(self, inputs, pretrained_embedding=None, tune_embedding=False) -> Model:
         # pylint: disable=too-many-locals
@@ -59,7 +59,7 @@ class NEM:
         embedding_weights = None if pretrained_embedding is None else [pretrained_embedding]
         embedding = AnyShapeEmbedding(input_dim=self.data_processor.get_vocabulary_size(),
                                       output_dim=self.embedding_dim, weights=embedding_weights,
-                                      trainable=tune_embedding, name="Embedding")
+                                      mask_zero=True, trainable=tune_embedding, name="Embedding")
         embedded_inputs = embedding(input_layer)  # (batch_size, num_slots, num_words, embedding_dim)
         embedded_inputs = Dropout(0.5)(embedded_inputs)
         encoder = TimeDistributedRNN(LSTM(self.embedding_dim), name="ArgumentEncoder")
@@ -85,7 +85,8 @@ class NEM:
         input_layer = Input(shape=(num_words,), name="SentenceInput", dtype='int32')
         embedding_weights = None if pretrained_embedding is None else [pretrained_embedding]
         embedding = Embedding(input_dim=self.data_processor.get_vocabulary_size(), output_dim=self.embedding_dim,
-                              weights=embedding_weights, trainable=tune_embedding, name="Embedding")
+                              weights=embedding_weights, mask_zero=True, trainable=tune_embedding,
+                              name="Embedding")
         embedded_inputs = embedding(input_layer)  # (batch_size, num_words, embedding_dim)
         embedded_inputs = Dropout(0.5)(embedded_inputs)
         encoder = LSTM(self.embedding_dim, name="SentenceEncoder")
