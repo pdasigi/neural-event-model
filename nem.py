@@ -6,6 +6,8 @@ import sys
 import argparse
 import pickle
 import os
+import numpy
+numpy.random.seed(21957)
 
 from keras.models import Model, load_model
 from keras.layers import Input, Dense, Dropout, Embedding, LSTM
