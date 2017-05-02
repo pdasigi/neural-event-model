@@ -99,12 +99,13 @@ class NEM:
         model = Model(inputs=input_layer, outputs=sentence_prediction)
         return model
 
-    def make_inputs(self, filename: str, for_test=False, pad_info=None):
+    def make_inputs(self, filename: str, for_test=False, pad_info=None, include_sentences_in_events=False):
         '''
         Read in a file and use the data processor to make train or test inputs.
         '''
         add_new_words = not for_test
-        sentence_inputs, event_inputs, labels = self.data_processor.index_data(filename, add_new_words, pad_info)
+        sentence_inputs, event_inputs, labels = self.data_processor.index_data(filename, add_new_words, pad_info,
+                                                                               include_sentences_in_events)
         if self.use_event_structure:
             return event_inputs, labels
         else:
@@ -122,9 +123,11 @@ def main():
     argument_parser.add_argument("--tune_embedding", help="Tune embedding if embedding file is provided.",
                                  action='store_true')
     argument_parser.add_argument("--wanted_args", type=str, nargs='+', help="Arguments to use in the event"
-                                 "structure", default=['A0', 'A1', 'AM-TMP', 'AM-LOC'])
+                                 " structure", default=['A0', 'A1', 'AM-TMP', 'AM-LOC'])
     argument_parser.add_argument("--ignore_structure", help="Encode sentences instead of events.",
                                  action='store_true')
+    argument_parser.add_argument("--include_sentences_in_events", help="Make the whole sentence an additional"
+                                 " argument in the event structure.", action='store_true')
     argument_parser.add_argument("--embedding_dim", type=int, help="Dimensionality of the whole network.",
                                  default=50)
     args = argument_parser.parse_args()
@@ -132,12 +135,13 @@ def main():
     nem = NEM(use_event_structure=use_event_structure, embedding_dim=args.embedding_dim)
     if args.train_file is not None:
         pad_info = {"wanted_args": args.wanted_args}
-        train_inputs, train_labels = nem.make_inputs(args.train_file, for_test=False, pad_info=pad_info)
+        train_inputs, train_labels = nem.make_inputs(args.train_file, for_test=False, pad_info=pad_info,
+                                                     include_sentences_in_events=args.include_sentences_in_events)
         nem.train_nem(train_inputs, train_labels, args.embedding_file, args.tune_embedding)
     if args.test_file is not None:
         pad_info_after_train = nem.data_processor.get_pad_info()
-        test_inputs, test_labels = nem.make_inputs(args.test_file, for_test=True,
-                                                   pad_info=pad_info_after_train)
+        test_inputs, test_labels = nem.make_inputs(args.test_file, for_test=True, pad_info=pad_info_after_train,
+                                                   include_sentences_in_events=args.include_sentences_in_events)
         nem.test_nem(test_inputs, test_labels)
 
 

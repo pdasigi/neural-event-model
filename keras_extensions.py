@@ -45,7 +45,7 @@ class MaskedFlatten(Flatten):
     def call(self, inputs, mask=None):
         # Assuming the output will be passed through a dense layer after this.
         if mask is not None:
-            inputs = K.switch(K.expand_dims(mask), inputs, K.zeros_like(inputs))
+            inputs = switch(K.expand_dims(mask), inputs, K.zeros_like(inputs))
         return super(MaskedFlatten, self).call(inputs)
 
     def compute_mask(self, inputs, mask=None):
@@ -58,3 +58,21 @@ class MaskedFlatten(Flatten):
                 return K.any(mask, axis=-1)
             else:
                 return K.batch_flatten(mask)
+
+
+def switch(cond, then_tensor, else_tensor):
+    '''
+    Keras' implementation of switch for tensorflow works differently compared to that for theano. This function
+    selects the appropriate methods.
+    '''
+    if K.backend() == 'tensorflow':
+        import tensorflow as tf
+        cond_shape = cond.get_shape()
+        input_shape = then_tensor.get_shape()
+        if cond_shape[-1] != input_shape[-1] and cond_shape[-1] == 1:
+            # This means the last dim is an embedding dimension.
+            cond = K.dot(tf.cast(cond, tf.float32), tf.ones((1, input_shape[-1])))
+        return tf.where(tf.cast(cond, dtype=tf.bool), then_tensor, else_tensor)
+    else:
+        import theano.tensor as T
+        return T.switch(cond, then_tensor, else_tensor)

@@ -19,7 +19,7 @@ class DataProcessor:
         self.max_arg_length = None
         self.word_index = {"NONE": 0, "UNK": 1}  # None is padding, UNK is OOV.
 
-    def index_data(self, filename, add_new_words=True, pad_info=None):
+    def index_data(self, filename, add_new_words=True, pad_info=None, include_sentences_in_events=False):
         '''
         Read data from file, and return indexed inputs. If this is for test, do not add new words to the
         vocabulary (treat them as unk). pad_info is applicable when we want to pad data to a pre-specified
@@ -32,6 +32,8 @@ class DataProcessor:
             indexed_event_args = {key: self._index_string(datum["event_structure"][key],
                                                           add_new_words=add_new_words) for key in
                                   datum["event_structure"].keys()}
+            if include_sentences_in_events:
+                indexed_event_args["sentence"] = indexed_sentence
             indexed_data.append((indexed_sentence, indexed_event_args, datum["label"]))
         sentence_inputs, event_inputs, labels = self.pad_data(indexed_data, pad_info)
         return sentence_inputs, event_inputs, self._make_one_hot(labels)
@@ -66,6 +68,10 @@ class DataProcessor:
         if not pad_info:
             pad_info = {}
         indexed_sentences, indexed_event_structures, labels = zip(*indexed_data)
+        event_structures_have_sentences = False
+        if "sentence" in indexed_event_structures[0]:
+            # This means index_data included sentences in event structures. We need to pad accordingly.
+            event_structures_have_sentences = True
         if "max_sentence_length" in pad_info:
             self.max_sentence_length = pad_info["max_sentence_length"]
         else:
@@ -79,6 +85,8 @@ class DataProcessor:
             self.arg_types = list(pad_info["wanted_args"])
             if "V" not in self.arg_types:
                 self.arg_types = ["V"] + self.arg_types
+            if "sentence" not in self.arg_types and event_structures_have_sentences:
+                self.arg_types += ["sentence"]
         else:
             arg_types = []
             for event_structure in indexed_event_structures:
