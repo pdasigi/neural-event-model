@@ -2,15 +2,19 @@
 Train and test Neural Event Model (NEM). This module also comes with a main function that acts as a CLI for NEM.
 '''
 
+import sys
 import argparse
+import pickle
+import os
 
-from keras.models import Model
+from keras.models import Model, load_model
 from keras.layers import Input, Dense, Dropout, Embedding, LSTM
-from keras.callbacks import EarlyStopping
 
 from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN, MaskedFlatten
 from read_data import DataProcessor
 
+NUM_EPOCHS = 50
+PATIENCE = 4
 
 class NEM:
     '''
@@ -21,6 +25,15 @@ class NEM:
         self.embedding_dim = embedding_dim
         self.data_processor = DataProcessor()
         self.model = None
+        model_type = "structured" if use_event_structure else "flat"
+        if not os.path.exists("saved_models"):
+            os.makedirs("saved_models")
+        self.model_prefix = "saved_models/nem_%s_dim=%d" % (model_type, embedding_dim)
+        if use_event_structure:
+            self.custom_objects = {"AnyShapeEmbedding": AnyShapeEmbedding, "MaskedFlatten": MaskedFlatten,
+                                   "TimeDistributedRNN": TimeDistributedRNN}
+        else:
+            self.custom_objects = {}
 
     def train_nem(self, inputs, labels, pretrained_embedding_file=None, tune_embedding=False):
         '''
@@ -36,9 +49,25 @@ class NEM:
             model = self._build_flat_model(inputs, pretrained_embedding, tune_embedding)
         model.summary()
         model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
-        early_stopping = EarlyStopping(monitor='val_acc')
-        model.fit(inputs, labels, epochs=20, validation_split=0.1, callbacks=[early_stopping])
         self.model = model
+        best_accuracy = 0.0
+        best_epoch = 0
+        num_worse_epochs = 0
+        for i in range(NUM_EPOCHS):
+            print("Epoch %d" % i, file=sys.stdout)
+            history = self.model.fit(inputs, labels, epochs=1, validation_split=0.1)
+            validation_accuracy = history.history['val_acc'][0]
+            if validation_accuracy > best_accuracy:
+                self._save_model(i)
+                best_epoch = i
+                num_worse_epochs = 0
+                best_accuracy = validation_accuracy
+            elif validation_accuracy < best_accuracy:
+                num_worse_epochs += 1
+                if num_worse_epochs >= PATIENCE:
+                    print("Ran out of patience. Stopping training.", file=sys.stdout)
+                    break
+        self._save_model_as_best(best_epoch)
 
     def test_nem(self, inputs, labels):
         '''
@@ -111,6 +140,30 @@ class NEM:
         else:
             return sentence_inputs, labels
 
+    def _save_model(self, epoch: int):
+        model_file = "%s_%d.h5" % (self.model_prefix, epoch)
+        data_processor_file = "%s_dp.pkl" % self.model_prefix
+        self.model.save(model_file)
+        pickle.dump(self.data_processor, open(data_processor_file, "wb"))
+
+    def _save_model_as_best(self, epoch: int):
+        best_model_file = "%s_%d.h5" % (self.model_prefix, epoch)
+        new_name = "%s_best.h5" % self.model_prefix
+        os.rename(best_model_file, new_name)
+
+    def load_model(self, epoch: int=None):
+        '''
+        Load a pretrained model, optionally from a specific epoch. If no epoch is specified, the model that gave
+        the best validation accuracy will be loaded.
+        '''
+        data_processor_file = "%s_dp.pkl" % self.model_prefix
+        self.data_processor = pickle.load(open(data_processor_file, "rb"))
+        if epoch is None:
+            model_file = "%s_best.h5" % self.model_prefix
+        else:
+            model_file = "%s_%d.h5" % (self.model_prefix, epoch)
+        self.model = load_model(model_file, custom_objects=self.custom_objects)
+
 
 def main():
     '''
@@ -139,6 +192,8 @@ def main():
                                                      include_sentences_in_events=args.include_sentences_in_events)
         nem.train_nem(train_inputs, train_labels, args.embedding_file, args.tune_embedding)
     if args.test_file is not None:
+        # Even if we trained NEM in this run, we should load the best model.
+        nem.load_model()
         pad_info_after_train = nem.data_processor.get_pad_info()
         test_inputs, test_labels = nem.make_inputs(args.test_file, for_test=True, pad_info=pad_info_after_train,
                                                    include_sentences_in_events=args.include_sentences_in_events)
