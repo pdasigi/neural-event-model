@@ -183,7 +183,7 @@ def main():
     argument_parser.add_argument("--tune_embedding", help="Tune embedding if embedding file is provided.",
                                  action='store_true')
     argument_parser.add_argument("--wanted_args", type=str, nargs='+', help="Arguments to use in the event"
-                                 " structure", default=['A0', 'A1', 'AM-TMP', 'AM-LOC'])
+                                 " structure")
     argument_parser.add_argument("--ignore_structure", help="Encode sentences instead of events.",
                                  action='store_true')
     argument_parser.add_argument("--include_sentences_in_events", help="Make the whole sentence an additional"
@@ -194,7 +194,7 @@ def main():
     use_event_structure = not args.ignore_structure
     nem = NEM(use_event_structure=use_event_structure, embedding_dim=args.embedding_dim)
     if args.train_file is not None:
-        pad_info = {"wanted_args": args.wanted_args}
+        pad_info = {"wanted_args": args.wanted_args} if args.wanted_args is not None else {}
         train_inputs, train_labels = nem.make_inputs(args.train_file, for_test=False, pad_info=pad_info,
                                                      include_sentences_in_events=args.include_sentences_in_events)
         nem.train_nem(train_inputs, train_labels, args.embedding_file, args.tune_embedding)
