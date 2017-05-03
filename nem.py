@@ -18,7 +18,7 @@ from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN, MaskedFlatte
 from read_data import DataProcessor
 
 NUM_EPOCHS = 50
-PATIENCE = 4
+PATIENCE = 5
 
 class NEM:
     '''
@@ -100,6 +100,7 @@ class NEM:
         embedded_inputs = Dropout(0.5)(embedded_inputs)
         encoder = TimeDistributedRNN(LSTM(self.embedding_dim), name="ArgumentEncoder")
         encoded_inputs = encoder(embedded_inputs)  # (batch_size, num_slots, embedding_dim)
+        encoded_inputs = Dropout(0.2)(encoded_inputs)
         # (batch_size, num_slots * embedding_dim)
         concatenated_slots = MaskedFlatten(name="SlotConcatenator")(encoded_inputs)
         # Note: We essentially have different projection weights for slots here.
@@ -127,6 +128,7 @@ class NEM:
         embedded_inputs = Dropout(0.5)(embedded_inputs)
         encoder = LSTM(self.embedding_dim, name="SentenceEncoder")
         encoded_inputs = encoder(embedded_inputs)  # (batch_size, embedding_dim)
+        encoded_inputs = Dropout(0.2)(encoded_inputs)
         # Project encoding to make the depth of this variant comparable to that of the structured variant.
         # (batch_size, embedding_dim)
         projected_encoding = Dense(self.embedding_dim, activation="tanh", name="Projection")(encoded_inputs)
@@ -204,7 +206,6 @@ def main():
         pad_info_after_train = nem.data_processor.get_pad_info()
         test_inputs, test_labels = nem.make_inputs(args.test_file, for_test=True, pad_info=pad_info_after_train,
                                                    include_sentences_in_events=args.include_sentences_in_events)
-        print(numpy.sum(numpy.argmax(test_labels, axis=-1)))
         nem.test_nem(test_inputs, test_labels)
 
 
