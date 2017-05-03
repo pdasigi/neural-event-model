@@ -2,6 +2,7 @@
 Train and test Neural Event Model (NEM). This module also comes with a main function that acts as a CLI for NEM.
 '''
 
+# pylint: disable=wrong-import-position
 import sys
 import argparse
 import pickle
@@ -12,6 +13,7 @@ numpy.random.seed(21957)
 from keras.models import Model, load_model
 from keras.layers import Input, Dense, Dropout, Embedding, LSTM
 
+from metrics import precision, recall, f1_score
 from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN, MaskedFlatten
 from read_data import DataProcessor
 
@@ -31,11 +33,13 @@ class NEM:
         if not os.path.exists("saved_models"):
             os.makedirs("saved_models")
         self.model_prefix = "saved_models/nem_%s_dim=%d" % (model_type, embedding_dim)
+        # Custom metrics
+        self.custom_objects = {"precision": precision, "recall": recall, "f1_score": f1_score}
         if use_event_structure:
-            self.custom_objects = {"AnyShapeEmbedding": AnyShapeEmbedding, "MaskedFlatten": MaskedFlatten,
-                                   "TimeDistributedRNN": TimeDistributedRNN}
-        else:
-            self.custom_objects = {}
+            # Custom layers
+            self.custom_objects.update({"AnyShapeEmbedding": AnyShapeEmbedding,
+                                        "MaskedFlatten": MaskedFlatten,
+                                        "TimeDistributedRNN": TimeDistributedRNN})
 
     def train_nem(self, inputs, labels, pretrained_embedding_file=None, tune_embedding=False):
         '''
@@ -50,7 +54,8 @@ class NEM:
         else:
             model = self._build_flat_model(inputs, pretrained_embedding, tune_embedding)
         model.summary()
-        model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
+        model.compile("adam", "categorical_crossentropy", metrics=["accuracy", precision,
+                                                                   recall, f1_score])
         self.model = model
         best_accuracy = 0.0
         best_epoch = 0
@@ -199,6 +204,7 @@ def main():
         pad_info_after_train = nem.data_processor.get_pad_info()
         test_inputs, test_labels = nem.make_inputs(args.test_file, for_test=True, pad_info=pad_info_after_train,
                                                    include_sentences_in_events=args.include_sentences_in_events)
+        print(numpy.sum(numpy.argmax(test_labels, axis=-1)))
         nem.test_nem(test_inputs, test_labels)
 
 
