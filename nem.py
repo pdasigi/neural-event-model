@@ -76,13 +76,19 @@ class NEM:
                     break
         self._save_model_as_best(best_epoch)
 
-    def test_nem(self, inputs, labels):
+    def test_nem(self, inputs, labels, output_filename=None):
         '''
         Evaluate NEM on unseen data.
         '''
         metric_values = self.model.evaluate(inputs, labels)
         for metric_name, metric_value in zip(self.model.metrics_names, metric_values):
             print("%s: %.4f" % (metric_name, metric_value))
+        if output_filename is not None:
+            predictions = self.model.predict(inputs)
+            predicted_classes = numpy.argmax(predictions, axis=-1)
+            output_file = open(output_filename, "w")
+            for pred_class in predicted_classes:
+                print(pred_class, file=output_file)
 
     def _build_structured_model(self, inputs, pretrained_embedding=None, tune_embedding=False) -> Model:
         # pylint: disable=too-many-locals
@@ -192,6 +198,7 @@ def main():
                                  " argument in the event structure.", action='store_true')
     argument_parser.add_argument("--embedding_dim", type=int, help="Dimensionality of the whole network.",
                                  default=50)
+    argument_parser.add_argument("--output_file", type=str, help="Output file name to print predictions.")
     args = argument_parser.parse_args()
     use_event_structure = not args.ignore_structure
     nem = NEM(use_event_structure=use_event_structure, embedding_dim=args.embedding_dim)
@@ -206,7 +213,7 @@ def main():
         pad_info_after_train = nem.data_processor.get_pad_info()
         test_inputs, test_labels = nem.make_inputs(args.test_file, for_test=True, pad_info=pad_info_after_train,
                                                    include_sentences_in_events=args.include_sentences_in_events)
-        nem.test_nem(test_inputs, test_labels)
+        nem.test_nem(test_inputs, test_labels, output_filename=args.output_file)
 
 
 if __name__ == "__main__":
