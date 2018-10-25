@@ -14,7 +14,7 @@ class AnyShapeEmbedding(Embedding):
     This can be accomplished by simply changing the output shape computation.
     '''
     @overrides
-    def compute_output_shape(self, input_shape):
+    def get_output_shape_for(self, input_shape):
         return input_shape + (self.output_dim,)
 
 
@@ -49,15 +49,7 @@ class MaskedFlatten(Flatten):
         return super(MaskedFlatten, self).call(inputs)
 
     def compute_mask(self, inputs, mask=None):
-        if mask is None:
-            return None
-        else:
-            if K.ndim(mask) == 2:
-                # This needs special treatment. It means that the input ndim is 3, and output ndim is 2, thus
-                # requiring the mask's ndim to be 1.
-                return K.any(mask, axis=-1)
-            else:
-                return K.batch_flatten(mask)
+        return None
 
 
 def switch(cond, then_tensor, else_tensor):

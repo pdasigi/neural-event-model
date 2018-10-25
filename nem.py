@@ -62,7 +62,7 @@ class NEM:
         num_worse_epochs = 0
         for i in range(NUM_EPOCHS):
             print("Epoch %d" % i, file=sys.stdout)
-            history = self.model.fit(inputs, labels, epochs=1, validation_split=0.1)
+            history = self.model.fit(inputs, labels, nb_epoch=1, validation_split=0.1)
             validation_accuracy = history.history['val_acc'][0]
             if validation_accuracy > best_accuracy:
                 self._save_model(i)
@@ -116,7 +116,7 @@ class NEM:
         # Assuming binary classification.
         event_scorer = Dense(2, activation='softmax', name="EventScorer")
         event_prediction = event_scorer(composed_event)  # (batch_size, 2)
-        model = Model(inputs=input_layer, outputs=event_prediction)
+        model = Model(input=input_layer, output=event_prediction)
         return model
 
     def _build_flat_model(self, inputs, pretrained_embedding=None, tune_embedding=False) -> Model:
@@ -140,7 +140,7 @@ class NEM:
         projected_encoding = Dense(self.embedding_dim, activation="tanh", name="Projection")(encoded_inputs)
         sentence_scorer = Dense(2, activation='softmax', name="SentenceScorer")
         sentence_prediction = sentence_scorer(projected_encoding)
-        model = Model(inputs=input_layer, outputs=sentence_prediction)
+        model = Model(input=input_layer, output=sentence_prediction)
         return model
 
     def make_inputs(self, filename: str, for_test=False, pad_info=None, include_sentences_in_events=False):
