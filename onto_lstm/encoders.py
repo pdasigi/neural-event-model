@@ -4,8 +4,8 @@ from overrides import overrides
 
 from keras.layers import Embedding, Dropout, LSTM, Bidirectional
 
-from onto_attention import OntoAttentionLSTM
-from embedding import OntoAwareEmbedding
+from .onto_attention import OntoAttentionLSTM
+from .embedding import OntoAwareEmbedding
 
 
 class Encoder(object):
@@ -68,7 +68,8 @@ class LSTMEncoder(Encoder):
         if self.embedding_layer is None:
             if embedding_file is None:
                 if not self.tune_embedding:
-                    print >>sys.stderr, "Pretrained embedding is not given. Setting tune_embedding to True."
+                    print("Pretrained embedding is not given. Setting tune_embedding to True.",
+                          file=sys.stderr)
                     self.tune_embedding = True
                 embedding = None
             else:
@@ -106,7 +107,8 @@ class OntoLSTMEncoder(Encoder):
             synset_vocab_size = self.data_processor.get_vocab_size(onto_aware=True)
             if embedding_file is None:
                 if not self.tune_embedding:
-                    print >>sys.stderr, "Pretrained embedding is not given. Setting tune_embedding to True."
+                    print("Pretrained embedding is not given. Setting tune_embedding to True.",
+                          file=sys.stderr)
                     self.tune_embedding = True
                 embedding_weights = None
             else:

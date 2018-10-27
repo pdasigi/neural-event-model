@@ -13,7 +13,7 @@ class DataProcessor(object):
         self.process_preps = process_preps
         if process_preps:
             assert prep_senses_dir is not None, "Preposition senses directory (Semeval 07 data) not passed."
-            print >>sys.stderr, "Including preposition senses as well"
+            print("Including preposition senses as well", file=sys.stderr)
             self.prep_senses_dir = prep_senses_dir
         self.word_syn_cutoff = word_syn_cutoff
         self.syn_path_cutoff = syn_path_cutoff
@@ -50,8 +50,9 @@ class DataProcessor(object):
                 num_senses_per_prep.append(len(senses))
                 self.prep_senses[prep_str] = senses
         num_preps = len(self.prep_senses)
-        print >>sys.stderr, "Read senses for %d prepositions." % num_preps
-        print >>sys.stderr, "Senses per preposition: %f" % (float(sum(num_senses_per_prep))/num_preps)
+        print("Read senses for %d prepositions." % num_preps, file=sys.stderr)
+        print("Senses per preposition: %f" % (float(sum(num_senses_per_prep))/num_preps),
+              file=sys.stderr)
 
     # TODO: Take a coarse-grained mapping file and implement the following function.
     def map_fine_to_coarse(self, syn_name):
@@ -351,7 +352,8 @@ class DataProcessor(object):
                 vec = embedding_map[element]
                 target_embedding[target_index[element]] = vec
                 num_found_elements += 1
-        print >>sys.stderr, "Found vectors for %.4f of the words" % (float(num_found_elements) / num_all_elements)
+        print("Found vectors for %.4f of the words" % (float(num_found_elements) /
+                                                       num_all_elements), file=sys.stderr)
         return target_embedding
 
     def get_token_from_index(self, index, onto_aware=True):

@@ -17,6 +17,9 @@ from metrics import precision, recall, f1_score
 from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN, MaskedFlatten
 from read_data import DataProcessor
 
+from onto_lstm.encoders import OntoLSTMEncoder
+from onto_lstm import index_data as onto_lstm_data
+
 NUM_EPOCHS = 50
 PATIENCE = 5
 
@@ -24,10 +27,11 @@ class NEM:
     '''
     Neural Event Model
     '''
-    def __init__(self, use_event_structure=True, embedding_dim=50):
+    def __init__(self, use_event_structure=True, embedding_dim=50,
+                 onto_aware=False, num_senses=3, num_hyps=5):
         self.use_event_structure = use_event_structure
         self.embedding_dim = embedding_dim
-        self.data_processor = DataProcessor()
+        self.data_processor = DataProcessor(num_senses=num_senses, num_hyps=num_hyps)
         self.model = None
         model_type = "structured" if use_event_structure else "flat"
         if not os.path.exists("saved_models"):
@@ -40,19 +44,21 @@ class NEM:
             self.custom_objects.update({"AnyShapeEmbedding": AnyShapeEmbedding,
                                         "MaskedFlatten": MaskedFlatten,
                                         "TimeDistributedRNN": TimeDistributedRNN})
+        self._onto_aware = onto_aware
+        self.num_hyps = num_hyps
+        self.num_senses = num_senses
 
     def train_nem(self, inputs, labels, pretrained_embedding_file=None, tune_embedding=False):
         '''
         Train NEM. Depending on whether `use_event_structure` is set in the initializer, the model
         uses either the semantic role structure or just the sentences.
         '''
-        pretrained_embedding = None
-        if pretrained_embedding_file is not None:
-            pretrained_embedding = self.data_processor.get_embedding(pretrained_embedding_file)
         if self.use_event_structure:
-            model = self._build_structured_model(inputs, pretrained_embedding, tune_embedding)
+            model = self._build_structured_model(inputs=inputs, pretrained_embedding_file=pretrained_embedding_file,
+                                                 tune_embedding=tune_embedding)
         else:
-            model = self._build_flat_model(inputs, pretrained_embedding, tune_embedding)
+            model = self._build_flat_model(inputs=inputs, pretrained_embedding_file=pretrained_embedding_file,
+                                           tune_embedding=tune_embedding)
         model.summary()
         model.compile("adam", "categorical_crossentropy", metrics=["accuracy", precision,
                                                                    recall, f1_score])
@@ -90,15 +96,21 @@ class NEM:
             for pred_class in predicted_classes:
                 print(pred_class, file=output_file)
 
-    def _build_structured_model(self, inputs, pretrained_embedding=None, tune_embedding=False) -> Model:
+    def _build_structured_model(self, inputs, pretrained_embedding_file=None, tune_embedding=False) -> Model:
+        if self._onto_aware:
+            # TODO(pradeep): Implement this.
+            raise NotImplementedError
         # pylint: disable=too-many-locals
         _, num_slots, num_words = inputs.shape
         # (batch_size, num_slots, num_words)
-        if pretrained_embedding is None:
+        if pretrained_embedding_file is None:
             # Override tune_embedding if no pretrained embedding is given.
             tune_embedding = True
         input_layer = Input(shape=(num_slots, num_words), name="EventInput", dtype='int32')
-        embedding_weights = None if pretrained_embedding is None else [pretrained_embedding]
+        embedding_weights = None
+        if pretrained_embedding_file is not None:
+            pretrained_embedding = self.data_processor.get_embedding(pretrained_embedding_file)
+            embedding_weights = [pretrained_embedding]
         embedding = AnyShapeEmbedding(input_dim=self.data_processor.get_vocabulary_size(),
                                       output_dim=self.embedding_dim, weights=embedding_weights,
                                       mask_zero=True, trainable=tune_embedding, name="Embedding")
@@ -119,22 +131,39 @@ class NEM:
         model = Model(input=input_layer, output=event_prediction)
         return model
 
-    def _build_flat_model(self, inputs, pretrained_embedding=None, tune_embedding=False) -> Model:
+    def _build_flat_model(self, inputs, pretrained_embedding_file=None, tune_embedding=False) -> Model:
         # pylint: disable=too-many-locals
-        _, num_words = inputs.shape
-        if pretrained_embedding is None:
+        if pretrained_embedding_file is None:
             # Override tune_embedding if no pretrained embedding is given.
             tune_embedding = True
-        input_layer = Input(shape=(num_words,), name="SentenceInput", dtype='int32')
-        embedding_weights = None if pretrained_embedding is None else [pretrained_embedding]
-        embedding = Embedding(input_dim=self.data_processor.get_vocabulary_size(), output_dim=self.embedding_dim,
-                              weights=embedding_weights, mask_zero=True, trainable=tune_embedding,
-                              name="Embedding")
-        embedded_inputs = embedding(input_layer)  # (batch_size, num_words, embedding_dim)
-        embedded_inputs = Dropout(0.5)(embedded_inputs)
-        encoder = LSTM(self.embedding_dim, name="SentenceEncoder")
-        encoded_inputs = encoder(embedded_inputs)  # (batch_size, embedding_dim)
-        encoded_inputs = Dropout(0.2)(encoded_inputs)
+
+        input_layer = Input(shape=inputs.shape[1:], name="SentenceInput", dtype='int32')
+        if self._onto_aware:
+            onto_lstm = OntoLSTMEncoder(num_senses=self.num_senses,
+                                        num_hyps=self.num_hyps,
+                                        use_attention=True,
+                                        set_sense_priors=True,
+                                        data_processor=self.data_processor.onto_lstm_data_processor,
+                                        embed_dim=self.embedding_dim,
+                                        return_sequences=False,
+                                        tune_embedding=tune_embedding)
+            self.custom_objects.update(onto_lstm.get_custom_objects())
+            encoded_inputs = onto_lstm.get_encoded_phrase(phrase_input_layer=input_layer,
+                                                          embedding=pretrained_embedding_file,
+                                                          dropout={"embedding": 0.5, "encoder": 0.2})
+        else:
+            embedding_weights = None
+            if pretrained_embedding_file is not None:
+                pretrained_embedding = self.data_processor.get_embedding(pretrained_embedding_file)
+                embedding_weights = [pretrained_embedding]
+            embedding = Embedding(input_dim=self.data_processor.get_vocabulary_size(), output_dim=self.embedding_dim,
+                                  weights=embedding_weights, mask_zero=True, trainable=tune_embedding,
+                                  name="Embedding")
+            embedded_inputs = embedding(input_layer)  # (batch_size, num_words, embedding_dim)
+            embedded_inputs = Dropout(0.5)(embedded_inputs)
+            encoder = LSTM(self.embedding_dim, name="SentenceEncoder")
+            encoded_inputs = encoder(embedded_inputs)  # (batch_size, embedding_dim)
+            encoded_inputs = Dropout(0.2)(encoded_inputs)
         # Project encoding to make the depth of this variant comparable to that of the structured variant.
         # (batch_size, embedding_dim)
         projected_encoding = Dense(self.embedding_dim, activation="tanh", name="Projection")(encoded_inputs)
@@ -149,7 +178,8 @@ class NEM:
         '''
         add_new_words = not for_test
         sentence_inputs, event_inputs, labels = self.data_processor.index_data(filename, add_new_words, pad_info,
-                                                                               include_sentences_in_events)
+                                                                               include_sentences_in_events,
+                                                                               self._onto_aware)
         if self.use_event_structure:
             return event_inputs, labels
         else:
@@ -194,6 +224,12 @@ def main():
                                  " structure")
     argument_parser.add_argument("--ignore_structure", help="Encode sentences instead of events.",
                                  action='store_true')
+    argument_parser.add_argument("--onto_aware", help="Use OntoLSTM as the encoder",
+                                 action='store_true')
+    argument_parser.add_argument("--num_senses", type=int, default=3,
+                                 help="Number of senses if using OntoLSTM (default 3)")
+    argument_parser.add_argument("--num_hyps", type=int, default=5,
+                                 help="Number of hypernyms if using OntoLSTM (default 5)")
     argument_parser.add_argument("--include_sentences_in_events", help="Make the whole sentence an additional"
                                  " argument in the event structure.", action='store_true')
     argument_parser.add_argument("--embedding_dim", type=int, help="Dimensionality of the whole network.",
@@ -201,12 +237,14 @@ def main():
     argument_parser.add_argument("--output_file", type=str, help="Output file name to print predictions.")
     args = argument_parser.parse_args()
     use_event_structure = not args.ignore_structure
-    nem = NEM(use_event_structure=use_event_structure, embedding_dim=args.embedding_dim)
+    nem = NEM(use_event_structure=use_event_structure, embedding_dim=args.embedding_dim,
+              onto_aware=args.onto_aware, num_senses=args.num_senses, num_hyps=args.num_hyps)
     if args.train_file is not None:
         pad_info = {"wanted_args": args.wanted_args} if args.wanted_args is not None else {}
         train_inputs, train_labels = nem.make_inputs(args.train_file, for_test=False, pad_info=pad_info,
                                                      include_sentences_in_events=args.include_sentences_in_events)
-        nem.train_nem(train_inputs, train_labels, args.embedding_file, args.tune_embedding)
+        nem.train_nem(inputs=train_inputs, labels=train_labels, pretrained_embedding_file=args.embedding_file,
+                      tune_embedding=args.tune_embedding)
     if args.test_file is not None:
         # Even if we trained NEM in this run, we should load the best model.
         nem.load_model()

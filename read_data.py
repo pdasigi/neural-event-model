@@ -7,19 +7,24 @@ from typing import List
 
 import numpy
 
+from onto_lstm.index_data import DataProcessor as OntoLSTMDataProcessor
+
 
 class DataProcessor:
     '''
     Read in data in json format, index and vectorize words, preparing data for train or test.
     '''
-    def __init__(self):
+    def __init__(self, num_senses=3, num_hyps=5):
         # All types of arguments seen by the processor. A0, A1, etc.
         self.arg_types = []
         self.max_sentence_length = None
         self.max_arg_length = None
         self.word_index = {"NONE": 0, "UNK": 1}  # None is padding, UNK is OOV.
+        self.onto_lstm_data_processor = OntoLSTMDataProcessor(word_syn_cutoff=num_senses,
+                                                              syn_path_cutoff=num_hyps)
 
-    def index_data(self, filename, add_new_words=True, pad_info=None, include_sentences_in_events=False):
+    def index_data(self, filename, add_new_words=True, pad_info=None,
+                   include_sentences_in_events=False, onto_aware=False):
         '''
         Read data from file, and return indexed inputs. If this is for test, do not add new words to the
         vocabulary (treat them as unk). pad_info is applicable when we want to pad data to a pre-specified
@@ -27,15 +32,39 @@ class DataProcessor:
         '''
         data = json.load(open(filename))
         indexed_data = []
-        for datum in data:
-            indexed_sentence = self._index_string(datum["sentence"], add_new_words=add_new_words)
-            indexed_event_args = {key: self._index_string(datum["event_structure"][key],
-                                                          add_new_words=add_new_words) for key in
-                                  datum["event_structure"].keys()}
-            if include_sentences_in_events:
-                indexed_event_args["sentence"] = indexed_sentence
-            indexed_data.append((indexed_sentence, indexed_event_args, datum["label"]))
-        sentence_inputs, event_inputs, labels = self.pad_data(indexed_data, pad_info)
+        if onto_aware:
+            for datum in data:
+                words, pos_tags = zip(*[token.split("_") for token in datum["sentence"].split()])
+                indexed_sentence = self.onto_lstm_data_processor.index_sentence(words=words,
+                                                                                pos_tags=pos_tags,
+                                                                                for_test=not add_new_words,
+                                                                                remove_singletons=False,
+                                                                                onto_aware=True)
+                indexed_event_args = {}
+                for key, arg in datum["event_structure"].items():
+                    arg_words, arg_pos_tags = zip(*[arg_word.split("_") for arg_word in arg.split()])
+                    indexed_arg = self.onto_lstm_data_processor.index_sentence(words=arg_words,
+                                                                               pos_tags=arg_pos_tags,
+                                                                               for_test=not add_new_words,
+                                                                               remove_singletons=False,
+                                                                               onto_aware=True)
+                    indexed_event_args[key] = indexed_arg
+                if include_sentences_in_events:
+                    indexed_event_args["sentence"] = indexed_sentence
+                indexed_data.append((indexed_sentence, indexed_event_args, datum["label"]))
+            sentence_inputs, event_inputs, labels = self.pad_data(indexed_data, pad_info,
+                                                                  onto_aware=True)
+
+        else:
+            for datum in data:
+                indexed_sentence = self._index_string(datum["sentence"], add_new_words=add_new_words)
+                indexed_event_args = {key: self._index_string(datum["event_structure"][key],
+                                                              add_new_words=add_new_words) for key in
+                                      datum["event_structure"].keys()}
+                if include_sentences_in_events:
+                    indexed_event_args["sentence"] = indexed_sentence
+                indexed_data.append((indexed_sentence, indexed_event_args, datum["label"]))
+            sentence_inputs, event_inputs, labels = self.pad_data(indexed_data, pad_info)
         return sentence_inputs, event_inputs, self._make_one_hot(labels)
 
     def _index_string(self, string: str, add_new_words=True):
@@ -58,12 +87,11 @@ class DataProcessor:
         output[numpy.arange(len(label_indices)), label_indices] = 1
         return output
 
-    def pad_data(self, indexed_data, pad_info):
+    def pad_data(self, indexed_data, pad_info, onto_aware=False):
         '''
         Takes a list of tuples containing indexed sentences, indexed event structures and labels, and returns numpy
         arrays.
         '''
-        sentence_inputs = []
         # Setting max sentence length
         if not pad_info:
             pad_info = {}
@@ -77,8 +105,15 @@ class DataProcessor:
         else:
             self.max_sentence_length = max([len(indexed_sentence) for indexed_sentence in indexed_sentences])
         # Padding and/or truncating sentences
-        for indexed_sentence in indexed_sentences:
-            sentence_inputs.append(self._pad_indexed_string(indexed_sentence, self.max_sentence_length))
+
+        if onto_aware:
+            sentence_inputs = self.onto_lstm_data_processor.pad_input(indexed_sentences, onto_aware=True,
+                                                                      sentlenlimit=self.max_sentence_length)
+        else:
+            sentence_inputs = []
+            for indexed_sentence in indexed_sentences:
+                sentence_inputs.append(self._pad_indexed_string(indexed_sentence,
+                                                                self.max_sentence_length))
 
         # Removing unnecessary arguments.
         if "wanted_args" in pad_info:
@@ -94,22 +129,33 @@ class DataProcessor:
             self.arg_types = list(set(arg_types))
         # Making ordered event argument indices, converting argument dicts into lists with a canonical order.
         ordered_event_structures = []
+        null_event_structure = [[[self.onto_lstm_data_processor.synset_index["NONE"]]]] if \
+                onto_aware else [self.word_index["NONE"]]
         for event_structure in indexed_event_structures:
             ordered_event_structure = [event_structure[arg_type] if arg_type in event_structure else
-                                       [self.word_index["NONE"]] for arg_type in self.arg_types]
+                                       null_event_structure for arg_type in self.arg_types]
             ordered_event_structures.append(ordered_event_structure)
         if "max_arg_length" in pad_info:
             self.max_arg_length = pad_info["max_arg_length"]
         else:
             self.max_arg_length = max([max(
                 [len(arg) for arg in structure]) for structure in ordered_event_structures])
+
         event_inputs = []
-        for event_structure in ordered_event_structures:
-            event_inputs.append([self._pad_indexed_string(indexed_arg, self.max_arg_length) for indexed_arg in
-                                 event_structure])
+        if onto_aware:
+            for event_structure in ordered_event_structures:
+                event_inputs.append(self.onto_lstm_data_processor.pad_input(event_structure,
+                                                                            onto_aware=True,
+                                                                            sentlenlimit=self.max_arg_length))
+        else:
+            for event_structure in ordered_event_structures:
+                event_inputs.append([self._pad_indexed_string(indexed_arg, self.max_arg_length) for indexed_arg in
+                                     event_structure])
         return numpy.asarray(sentence_inputs), numpy.asarray(event_inputs), numpy.asarray(labels)
 
-    def _pad_indexed_string(self, indexed_string: List[int], max_string_length: int):
+    def _pad_indexed_string(self,
+                            indexed_string: List[int],
+                            max_string_length: int):
         '''
         Pad and/or truncate an indexed string to the max length. Both padding and truncation happen from the left.
         '''
