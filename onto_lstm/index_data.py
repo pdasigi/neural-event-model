@@ -327,7 +327,7 @@ class DataProcessor(object):
         embedding_map = {}
         rep_max = -float("inf")
         rep_min = float("inf")
-        for line in gzip.open(embedding_file):
+        for line in gzip.open(embedding_file, "rt"):
             ln_parts = line.strip().split()
             if len(ln_parts) == 2:
                 continue

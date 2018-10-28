@@ -11,7 +11,7 @@ import numpy
 numpy.random.seed(21957)
 
 from keras.models import Model, load_model
-from keras.layers import Input, Dense, Dropout, Embedding, LSTM
+from keras.layers import Input, Dense, Dropout, Embedding, LSTM, Lambda, merge
 
 from metrics import precision, recall, f1_score
 from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN, MaskedFlatten
@@ -97,30 +97,47 @@ class NEM:
                 print(pred_class, file=output_file)
 
     def _build_structured_model(self, inputs, pretrained_embedding_file=None, tune_embedding=False) -> Model:
-        if self._onto_aware:
-            # TODO(pradeep): Implement this.
-            raise NotImplementedError
         # pylint: disable=too-many-locals
-        _, num_slots, num_words = inputs.shape
-        # (batch_size, num_slots, num_words)
+        embedding_weights = None
         if pretrained_embedding_file is None:
             # Override tune_embedding if no pretrained embedding is given.
             tune_embedding = True
-        input_layer = Input(shape=(num_slots, num_words), name="EventInput", dtype='int32')
-        embedding_weights = None
-        if pretrained_embedding_file is not None:
+        else:
             pretrained_embedding = self.data_processor.get_embedding(pretrained_embedding_file)
             embedding_weights = [pretrained_embedding]
-        embedding = AnyShapeEmbedding(input_dim=self.data_processor.get_vocabulary_size(),
-                                      output_dim=self.embedding_dim, weights=embedding_weights,
-                                      mask_zero=True, trainable=tune_embedding, name="Embedding")
-        embedded_inputs = embedding(input_layer)  # (batch_size, num_slots, num_words, embedding_dim)
-        embedded_inputs = Dropout(0.5)(embedded_inputs)
-        encoder = TimeDistributedRNN(LSTM(self.embedding_dim), name="ArgumentEncoder")
-        encoded_inputs = encoder(embedded_inputs)  # (batch_size, num_slots, embedding_dim)
-        encoded_inputs = Dropout(0.2)(encoded_inputs)
-        # (batch_size, num_slots * embedding_dim)
-        concatenated_slots = MaskedFlatten(name="SlotConcatenator")(encoded_inputs)
+        num_slots = inputs.shape[1]
+        input_layer = Input(shape=inputs.shape[1:], name="EventInput", dtype='int32')
+        if self._onto_aware:
+            onto_lstm = OntoLSTMEncoder(num_senses=self.num_senses,
+                                        num_hyps=self.num_hyps,
+                                        use_attention=True,
+                                        set_sense_priors=True,
+                                        data_processor=self.data_processor.onto_lstm_data_processor,
+                                        embed_dim=self.embedding_dim,
+                                        return_sequences=False,
+                                        tune_embedding=tune_embedding)
+            self.custom_objects.update(onto_lstm.get_custom_objects())
+            all_slot_encodings = []
+            for i in range(num_slots):
+                slot_input_layer = Lambda(lambda x: x[:, i], output_shape=(1,) + inputs.shape[2:])
+                slot_input = slot_input_layer(input_layer)
+                slot_encoding = onto_lstm.get_encoded_phrase(phrase_input_layer=slot_input,
+                                                             embedding=pretrained_embedding_file,
+                                                             dropout={"embedding": 0.5, "encoder": 0.2})
+                all_slot_encodings.append(slot_encoding)
+            concatenated_slots = merge(all_slot_encodings, mode='concat', concat_axis=1)
+
+        else:
+            embedding = AnyShapeEmbedding(input_dim=self.data_processor.get_vocabulary_size(),
+                                          output_dim=self.embedding_dim, weights=embedding_weights,
+                                          mask_zero=True, trainable=tune_embedding, name="Embedding")
+            embedded_inputs = embedding(input_layer)  # (batch_size, num_slots, num_words, embedding_dim)
+            embedded_inputs = Dropout(0.5)(embedded_inputs)
+            encoder = TimeDistributedRNN(LSTM(self.embedding_dim), name="ArgumentEncoder")
+            encoded_inputs = encoder(embedded_inputs)  # (batch_size, num_slots, embedding_dim)
+            encoded_inputs = Dropout(0.2)(encoded_inputs)
+            # (batch_size, num_slots * embedding_dim)
+            concatenated_slots = MaskedFlatten(name="SlotConcatenator")(encoded_inputs)
         # Note: We essentially have different projection weights for slots here.
         event_composer = Dense(self.embedding_dim, activation='tanh', name="EventComposer")
         # (batch_size, embedding_dim)

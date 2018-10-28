@@ -185,7 +185,7 @@ class DataProcessor:
         index.
         '''
         pretrained_embedding = {}
-        for line in gzip.open(embedding_file):
+        for line in gzip.open(embedding_file, "rt"):
             parts = line.strip().split()
             if len(parts) == 2:
                 continue
