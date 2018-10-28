@@ -18,7 +18,6 @@ from keras_extensions import AnyShapeEmbedding, TimeDistributedRNN, MaskedFlatte
 from read_data import DataProcessor
 
 from onto_lstm.encoders import OntoLSTMEncoder
-from onto_lstm import index_data as onto_lstm_data
 
 NUM_EPOCHS = 50
 PATIENCE = 5
@@ -47,6 +46,10 @@ class NEM:
         self._onto_aware = onto_aware
         self.num_hyps = num_hyps
         self.num_senses = num_senses
+        if self._onto_aware:
+            # Declaring ontolstm only to update custom objects.
+            onto_lstm = OntoLSTMEncoder(num_senses, num_hyps, True, True)
+            self.custom_objects.update(onto_lstm.get_custom_objects())
 
     def train_nem(self, inputs, labels, pretrained_embedding_file=None, tune_embedding=False):
         '''
@@ -108,22 +111,21 @@ class NEM:
         num_slots = inputs.shape[1]
         input_layer = Input(shape=inputs.shape[1:], name="EventInput", dtype='int32')
         if self._onto_aware:
-            onto_lstm = OntoLSTMEncoder(num_senses=self.num_senses,
-                                        num_hyps=self.num_hyps,
-                                        use_attention=True,
-                                        set_sense_priors=True,
-                                        data_processor=self.data_processor.onto_lstm_data_processor,
-                                        embed_dim=self.embedding_dim,
-                                        return_sequences=False,
-                                        tune_embedding=tune_embedding)
-            self.custom_objects.update(onto_lstm.get_custom_objects())
+            self.onto_lstm = OntoLSTMEncoder(num_senses=self.num_senses,
+                                             num_hyps=self.num_hyps,
+                                             use_attention=True,
+                                             set_sense_priors=True,
+                                             data_processor=self.data_processor.onto_lstm_data_processor,
+                                             embed_dim=self.embedding_dim,
+                                             return_sequences=False,
+                                             tune_embedding=tune_embedding)
             all_slot_encodings = []
             for i in range(num_slots):
                 slot_input_layer = Lambda(lambda x: x[:, i], output_shape=(1,) + inputs.shape[2:])
                 slot_input = slot_input_layer(input_layer)
-                slot_encoding = onto_lstm.get_encoded_phrase(phrase_input_layer=slot_input,
-                                                             embedding=pretrained_embedding_file,
-                                                             dropout={"embedding": 0.5, "encoder": 0.2})
+                slot_encoding = self.onto_lstm.get_encoded_phrase(phrase_input_layer=slot_input,
+                                                                  embedding=pretrained_embedding_file,
+                                                                  dropout={"embedding": 0.5, "encoder": 0.2})
                 all_slot_encodings.append(slot_encoding)
             concatenated_slots = merge(all_slot_encodings, mode='concat', concat_axis=1)
 
@@ -150,27 +152,25 @@ class NEM:
 
     def _build_flat_model(self, inputs, pretrained_embedding_file=None, tune_embedding=False) -> Model:
         # pylint: disable=too-many-locals
-        if pretrained_embedding_file is None:
-            # Override tune_embedding if no pretrained embedding is given.
-            tune_embedding = True
-
         input_layer = Input(shape=inputs.shape[1:], name="SentenceInput", dtype='int32')
         if self._onto_aware:
-            onto_lstm = OntoLSTMEncoder(num_senses=self.num_senses,
-                                        num_hyps=self.num_hyps,
-                                        use_attention=True,
-                                        set_sense_priors=True,
-                                        data_processor=self.data_processor.onto_lstm_data_processor,
-                                        embed_dim=self.embedding_dim,
-                                        return_sequences=False,
-                                        tune_embedding=tune_embedding)
-            self.custom_objects.update(onto_lstm.get_custom_objects())
-            encoded_inputs = onto_lstm.get_encoded_phrase(phrase_input_layer=input_layer,
-                                                          embedding=pretrained_embedding_file,
-                                                          dropout={"embedding": 0.5, "encoder": 0.2})
+            self.onto_lstm = OntoLSTMEncoder(num_senses=self.num_senses,
+                                             num_hyps=self.num_hyps,
+                                             use_attention=True,
+                                             set_sense_priors=True,
+                                             data_processor=self.data_processor.onto_lstm_data_processor,
+                                             embed_dim=self.embedding_dim,
+                                             return_sequences=False,
+                                             tune_embedding=tune_embedding)
+            encoded_inputs = self.onto_lstm.get_encoded_phrase(phrase_input_layer=input_layer,
+                                                               embedding=pretrained_embedding_file,
+                                                               dropout={"embedding": 0.5, "encoder": 0.2})
         else:
             embedding_weights = None
-            if pretrained_embedding_file is not None:
+            if pretrained_embedding_file is None:
+                # Override tune_embedding if no pretrained embedding is given.
+                tune_embedding = True
+            else:
                 pretrained_embedding = self.data_processor.get_embedding(pretrained_embedding_file)
                 embedding_weights = [pretrained_embedding]
             embedding = Embedding(input_dim=self.data_processor.get_vocabulary_size(), output_dim=self.embedding_dim,
@@ -224,6 +224,9 @@ class NEM:
             model_file = "%s_best.h5" % self.model_prefix
         else:
             model_file = "%s_%d.h5" % (self.model_prefix, epoch)
+        # If the following line throws errors, it may be because the version of Keras is too old to
+        # support deserializing Lambda layers in the model. The fix is the following
+        # https://github.com/keras-team/keras/pull/8592/files#diff-56dc3cc42e1732fdb3a3c2c3c8efa32a
         self.model = load_model(model_file, custom_objects=self.custom_objects)
 
 
@@ -265,6 +268,7 @@ def main():
     if args.test_file is not None:
         # Even if we trained NEM in this run, we should load the best model.
         nem.load_model()
+        nem.model.summary()
         pad_info_after_train = nem.data_processor.get_pad_info()
         test_inputs, test_labels = nem.make_inputs(args.test_file, for_test=True, pad_info=pad_info_after_train,
                                                    include_sentences_in_events=args.include_sentences_in_events)
